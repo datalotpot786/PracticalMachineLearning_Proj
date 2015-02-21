@@ -1,0 +1,286 @@
+---
+title: "Practical Machine Learning - Project Write-up"
+author: "Sandeep Patwardhan"
+date: "Saturday, February 14, 2015"
+output: html_document
+---
+
+Practical Machine Learning - Project
+========================================
+
+Executive Summary
+-----------------
+With technological advancement large amount of data can be collected with devices such as Jawbone Up, Fitbit etc. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. Using Machine learning we will predict the manner in which the exercises were done.
+
+Data Collection and Cleanup and necessary packages
+-----------------------------------------------
+
+``` {r, echo=TRUE}
+library(AppliedPredictiveModeling)
+library(caret);library(rattle);library(rpart.plot);library(randomForest)
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainData <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+testData <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+colnames_train <- colnames(trainData);colnames_test <- colnames(testData)
+```
+
+- Remove any NA's from the test data
+``` {r, echo=TRUE}
+# Count the number of non-NAs in each col.
+nonNAs <- function(x) {
+    as.vector(apply(x, 2, function(x) length(which(!is.na(x)))))
+}
+
+# Build vector of missing data or NA columns to drop.
+colcnts <- nonNAs(trainData)
+drops <- c()
+for (cnt in 1:length(colcnts)) {
+    if (colcnts[cnt] < nrow(trainData)) {
+        drops <- c(drops, colnames_train[cnt])
+    }
+}
+
+trainData <- trainData[,!(names(trainData) %in% drops)]
+trainData <- trainData[,8:length(colnames(trainData))]
+
+testData <- testData[,!(names(testData) %in% drops)]
+testData <- testData[,8:length(colnames(testData))]
+
+```
+
+- Clean up near zero var's.
+``` {r, echo=TRUE}
+nsv <- nearZeroVar(trainData, saveMetrics=TRUE)
+nsv
+```
+
+Algorithm
+---------
+
+- I am breaking training data set (19,622 rows) into 4 different sets
+- Each data set will be further split into 60% training and 40% test data sets.
+``` {r, echo=TRUE}
+tr_subset <- createDataPartition(y=trainData$classe, p=0.25, list=FALSE)
+tr_set1 <- trainData[tr_subset,]
+tr_remain <- trainData[-tr_subset,]
+set.seed(666)
+tr_subset <- createDataPartition(y=tr_remain$classe, p=0.33, list=FALSE)
+tr_set2 <- tr_remain[tr_subset,]
+tr_remain <- tr_remain[-tr_subset,]
+set.seed(666)
+tr_subset <- createDataPartition(y=tr_remain$classe, p=0.5, list=FALSE)
+tr_set3 <- tr_remain[tr_subset,]
+tr_set4 <- tr_remain[-tr_subset,]
+# Divide each of these 4 sets into training (60%) and test (40%) sets.
+set.seed(666)
+inTrain <- createDataPartition(y=tr_set1$classe, p=0.6, list=FALSE)
+sample_training1 <- tr_set1[inTrain,]
+sample_testing1 <- tr_set1[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=tr_set2$classe, p=0.6, list=FALSE)
+sample_training2 <- tr_set2[inTrain,]
+sample_testing2 <- tr_set2[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=tr_set3$classe, p=0.6, list=FALSE)
+sample_training3 <- tr_set3[inTrain,]
+sample_testing3 <- tr_set3[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=tr_set4$classe, p=0.6, list=FALSE)
+sample_training4 <- tr_set4[inTrain,]
+sample_testing4 <- tr_set4[-inTrain,]
+
+```
+
+Model Evaluation
+----------------
+
+- First I will use sample training set1 with no model features or adjustments 
+- This will help to determine accuracy percentage
+
+``` {r, echo=TRUE}
+set.seed(666)
+modFit <- train(sample_training1$classe ~ ., data = sample_training1, method="rpart")
+print(modFit, digits=3)
+```
+
+``` {r, echo=TRUE}
+print(modFit$finalModel, digits=3)
+fancyRpartPlot(modFit$finalModel)
+```
+
+- Running with sample test set1 as it is
+
+``` {r, echo=TRUE}
+predictions <- predict(modFit, newdata=sample_testing1)
+print(confusionMatrix(predictions, sample_testing1$classe), digits=4)
+```
+
+- Results from above exercise are not impressive
+- Now need to apply preprocessing cross validation technique
+- This is applied on same data set used above
+
+``` {r, echo=TRUE}
+set.seed(666)
+modFit <- train(sample_training1$classe ~ .,  preProcess=c("center", "scale"), data = sample_training1, method="rpart")
+print(modFit, digits=3)
+
+set.seed(666)
+modFit <- train(sample_training1$classe ~ .,  trControl=trainControl(method = "cv", number = 4), data = sample_training1, method="rpart")
+print(modFit, digits=3)
+```
+
+- Not much improvement seen
+- Will apply random forest along with preprocessing and cross validation
+
+Random Forest
+-------------
+
+- Apply cross validation only for training set1
+
+``` {r, echo=TRUE}
+set.seed(666)
+modFit <- train(sample_training1$classe ~ ., method="rf", trControl=trainControl(method = "cv", number = 4), data=sample_training1)
+print(modFit, digits=3)
+```
+
+- Random forest with cross validation improved the accuracy
+- Run same model with sample test set1
+
+``` {r, echo=TRUE}
+predictions <- predict(modFit, newdata=sample_testing1)
+print(confusionMatrix(predictions, sample_testing1$classe), digits=4)
+```
+
+- Run the same model with testing data downloaded (20 observations)
+
+``` {r, echo=TRUE}
+print(predict(modFit, newdata=testData))
+```
+
+
+- Running model for training set1 with preprocessing and cross validation
+
+``` {r, echo=TRUE}
+set.seed(666)
+modFit <- train(sample_training1$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=sample_training1)
+print(modFit, digits=3)
+```
+
+- Apply above algorithm on testdata set1
+
+``` {r, echo=TRUE}
+predictions <- predict(modFit, newdata=sample_testing1)
+print(confusionMatrix(predictions, sample_testing1$classe), digits=4)
+```
+
+- Run the same model with testing data downloaded (20 observations)
+- Basically we are applying preprocessing and cross validation on below
+- The reason for applying both is because it increased accuracy rate
+
+``` {r, echo=TRUE}
+print(predict(modFit, newdata=testData))
+```
+
+- Running model for 2nd training set with preprocessing and cross validation
+
+``` {r, echo=TRUE}
+set.seed(666)
+modFit <- train(sample_training2$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=sample_training2)
+print(modFit, digits=3)
+```
+
+- Apply above algorithm on testdata set2
+
+``` {r, echo=TRUE}
+predictions <- predict(modFit, newdata=sample_testing2)
+print(confusionMatrix(predictions, sample_testing2$classe), digits=4)
+```
+
+- Run the same model with testing data downloaded (20 observations)
+- Basically we are applying preprocessing and cross validation on below
+- The reason for applying both is because it increased accuracy rate
+
+``` {r, echo=TRUE}
+print(predict(modFit, newdata=testData))
+```
+
+- Running model for 3rd training set with preprocessing and cross validation
+
+``` {r, echo=TRUE}
+set.seed(666)
+modFit <- train(sample_training3$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=sample_training3)
+print(modFit, digits=3)
+```
+
+- Apply above algorithm on testdata set3
+
+``` {r, echo=TRUE}
+predictions <- predict(modFit, newdata=sample_testing3)
+print(confusionMatrix(predictions, sample_testing3$classe), digits=4)
+```
+
+- Run the same model with testing data downloaded (20 observations)
+- Basically we are applying preprocessing and cross validation on below
+- The reason for applying both is because it increased accuracy rate
+
+``` {r, echo=TRUE}
+print(predict(modFit, newdata=testData))
+```
+
+- Running model for 4th training set with preprocessing and cross validation
+
+``` {r, echo=TRUE}
+set.seed(666)
+modFit <- train(sample_training4$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=sample_training4)
+print(modFit, digits=3)
+```
+
+- Apply above algorithm on testdata set4
+
+``` {r, echo=TRUE}
+predictions <- predict(modFit, newdata=sample_testing4)
+print(confusionMatrix(predictions, sample_testing4$classe), digits=4)
+```
+
+- Run the same model with testing data downloaded (20 observations)
+- Basically we are applying preprocessing and cross validation on below
+- The reason for applying both is because it increased accuracy rate
+
+``` {r, echo=TRUE}
+predictions <- predict(modFit, newdata=testData)
+print(predict(modFit, newdata=testData))
+```
+
+Out of Sample Error Analysis
+----------------------------
+
+- Random Forest with preprocessing & cross validation test set1 :(1-0.9714)=0.0286
+- Random Forest with preprocessing & cross validation test set2 :(1-0.9634)=0.0366
+- Random Forest with preprocessing & cross validation test set3 :(1-0.9655)=0.0345
+- Random Forest with preprocessing & cross validation test set4 :(1-0.9563)=0.0437
+
+Conclusion
+----------
+
+- Average out of sample error comes out to be 0.03585
+- Using Random forest along with preprocessing and cross validation resulted in better accuracy
+
+
+``` {r, echo=FALSE}
+
+#Generate files with prediction results
+# function below will generate the files using 4th training model as the basis.
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predictions)
+
+```
+
